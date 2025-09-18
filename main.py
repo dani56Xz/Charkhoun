@@ -34,7 +34,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
 YOUR_ID = int(os.getenv("YOUR_ID", 123456789))
 DEFAULT_CHANNEL_ID = os.getenv("CHANNEL_ID", "@Charkhoun")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_qpBCcgGS9d5H@ep-rapid-band-aemkydem-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://charkhoun.onrender.com")
 STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
 
 SPIN_COST = 0
