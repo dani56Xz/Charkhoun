@@ -34,7 +34,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", 5542927340))
 YOUR_ID = int(os.getenv("YOUR_ID", 123456789))
 DEFAULT_CHANNEL_ID = os.getenv("CHANNEL_ID", "@Charkhoun")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://neondb_owner:npg_qpBCcgGS9d5H@ep-rapid-band-aemkydem-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://charkhoun.onrender.com")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://0kik4x8alj.onrender.com")
 STRICT_MEMBERSHIP = os.getenv("STRICT_MEMBERSHIP", "true").lower() == "true"
 
 SPIN_COST = 0
@@ -944,6 +944,51 @@ async def gift_users(update: Update, context: ContextTypes):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+# --------------------------- دستور اطلاع‌رسانی جدید ---------------------------
+
+async def notification(update: Update, context: ContextTypes):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+        return
+
+    await update.message.reply_text(
+        "📢 لطفاً پیام اطلاع‌رسانی را ارسال کنید:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ لغو", callback_data="cancel_notification")]])
+    )
+    context.user_data["waiting_for_notification"] = True
+
+async def send_notification_to_all_users(context: ContextTypes, message_text: str):
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM users")
+            all_users = [row[0] for row in cursor.fetchall()]
+            conn.commit()
+
+        success_count = 0
+        failed_count = 0
+        
+        for user_id in all_users:
+            try:
+                await context.bot.send_message(
+                    user_id,
+                    f"📢 اطلاع‌رسانی از مدیریت:\n\n{message_text}"
+                )
+                success_count += 1
+                await asyncio.sleep(0.1)  # برای جلوگیری از rate limit
+            except TelegramError as e:
+                logger.warning(f"نتوانست به کاربر {user_id} پیام اطلاع‌رسانی بفرستد: {str(e)}")
+                failed_count += 1
+            except Exception as e:
+                logger.error(f"خطای غیرمنتظره در ارسال به کاربر {user_id}: {str(e)}")
+                failed_count += 1
+
+        return success_count, failed_count
+    except Exception as e:
+        logger.error(f"خطا در ارسال اطلاع‌رسانی: {str(e)}")
+        return 0, 0
+
 # --------------------------- کیبوردها ---------------------------
 
 def chat_menu():
@@ -976,6 +1021,13 @@ def remove_channel_keyboard(channels):
     keyboard = [[InlineKeyboardButton(f"حذف {channel_name} ({channel_id})", callback_data=f"delete_channel_{channel_id}")]
                 for channel_id, channel_name in channels]
     keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data="back_to_channel_menu")])
+    return InlineKeyboardMarkup(keyboard)
+
+def notification_confirmation_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("✅ بله، ارسال کن", callback_data="confirm_notification_yes")],
+        [InlineKeyboardButton("❌ خیر، لغو کن", callback_data="confirm_notification_no")]
+    ]
     return InlineKeyboardMarkup(keyboard)
 
 # --------------------------- هندلرها ---------------------------
@@ -1323,14 +1375,40 @@ async def callback_handler(update: Update, context: ContextTypes):
         elif query.data == "top":
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT user_id, total_earnings FROM top_winners ORDER BY total_earnings DESC LIMIT 10")
+                cursor.execute("""
+                    SELECT user_id, username, total_earnings 
+                    FROM top_winners 
+                    ORDER BY total_earnings DESC 
+                    LIMIT 10
+                """)
                 rows = cursor.fetchall()
                 conn.commit()
-            msg = "🏆 پر درآمدهای گردونه شانس:\n\n"
+            
+            msg = "🏆 برترین‌های گردونه شانس 🏆\n\n"
+            msg += "🎖️ رتبه | 👤 کاربر | 💰 درآمد\n"
+            msg += "─" * 30 + "\n"
+            
             for i, row in enumerate(rows, 1):
-                msg += f"{i}. آیدی: {row[0]} - درآمد: {row[1]:,} تومان\n"
+                user_id_val, username, total_earnings = row
+                username_display = f"@{username}" if username else f"آیدی: {user_id_val}"
+                
+                # اضافه کردن مدال‌های مختلف بر اساس رتبه
+                if i == 1:
+                    medal = "🥇"
+                elif i == 2:
+                    medal = "🥈"
+                elif i == 3:
+                    medal = "🥉"
+                else:
+                    medal = f"{i}."
+                
+                msg += f"{medal} {username_display} - {total_earnings:,} تومان\n"
+            
             if not rows:
-                msg = "🏆 هنوز برنده‌ای ثبت نشده! تو اولین باش! 😎"
+                msg = "🏆 هنوز برنده‌ای ثبت نشده! تو اولین باش! 😎\n\n"
+                msg += "🎯 گردونه رو بچرخون و برنده شو!"
+            
+            msg += "\n💫 تو هم می‌تونی یکی از برترین‌ها باشی!"
             await query.message.reply_text(msg, reply_markup=chat_menu())
 
         elif query.data == "profile":
@@ -1495,6 +1573,40 @@ async def callback_handler(update: Update, context: ContextTypes):
         elif query.data == "confirm_gift_no":
             await query.message.edit_text("❌ عملیات هدیه لغو شد.", reply_markup=chat_menu())
 
+        elif query.data == "cancel_notification":
+            context.user_data["waiting_for_notification"] = False
+            await query.message.edit_text("❌ ارسال اطلاع‌رسانی لغو شد.", reply_markup=chat_menu())
+
+        elif query.data == "confirm_notification_yes":
+            if user_id != ADMIN_ID:
+                await query.message.reply_text("❌ شما اجازه انجام این عملیات را ندارید.")
+                return
+            
+            notification_text = context.user_data.get("notification_text", "")
+            if not notification_text:
+                await query.message.edit_text("❌ متن اطلاع‌رسانی یافت نشد.", reply_markup=chat_menu())
+                return
+            
+            await query.message.edit_text("⏳ در حال ارسال اطلاع‌رسانی به همه کاربران...")
+            
+            success_count, failed_count = await send_notification_to_all_users(context, notification_text)
+            
+            await query.message.edit_text(
+                f"✅ اطلاع‌رسانی با موفقیت ارسال شد!\n\n"
+                f"✅ تعداد موفق: {success_count}\n"
+                f"❌ تعداد ناموفق: {failed_count}",
+                reply_markup=chat_menu()
+            )
+            
+            # پاک کردن وضعیت
+            context.user_data["waiting_for_notification"] = False
+            context.user_data["notification_text"] = None
+
+        elif query.data == "confirm_notification_no":
+            context.user_data["waiting_for_notification"] = False
+            context.user_data["notification_text"] = None
+            await query.message.edit_text("❌ ارسال اطلاع‌رسانی لغو شد.", reply_markup=chat_menu())
+
     except Exception as e:
         logger.error(f"خطای هندلر callback برای کاربر {user_id}: {str(e)}")
         await query.message.reply_text(
@@ -1560,14 +1672,40 @@ async def handle_messages(update: Update, context: ContextTypes):
         elif text == "🏆 پر درآمد ها":
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT user_id, total_earnings FROM top_winners ORDER BY total_earnings DESC LIMIT 10")
+                cursor.execute("""
+                    SELECT user_id, username, total_earnings 
+                    FROM top_winners 
+                    ORDER BY total_earnings DESC 
+                    LIMIT 10
+                """)
                 rows = cursor.fetchall()
                 conn.commit()
-            msg = "🏆 پر درآمدهای گردونه شانس:\n\n"
+            
+            msg = "🏆 برترین‌های گردونه شانس 🏆\n\n"
+            msg += "🎖️ رتبه | 👤 کاربر | 💰 درآمد\n"
+            msg += "─" * 30 + "\n"
+            
             for i, row in enumerate(rows, 1):
-                msg += f"{i}. آیدی: {row[0]} - درآمد: {row[1]:,} تومان\n"
+                user_id_val, username, total_earnings = row
+                username_display = f"@{username}" if username else f"آیدی: {user_id_val}"
+                
+                # اضافه کردن مدال‌های مختلف بر اساس رتبه
+                if i == 1:
+                    medal = "🥇"
+                elif i == 2:
+                    medal = "🥈"
+                elif i == 3:
+                    medal = "🥉"
+                else:
+                    medal = f"{i}."
+                
+                msg += f"{medal} {username_display} - {total_earnings:,} تومان\n"
+            
             if not rows:
-                msg = "🏆 هنوز برنده‌ای ثبت نشده! تو اولین باش! 😎"
+                msg = "🏆 هنوز برنده‌ای ثبت نشده! تو اولین باش! 😎\n\n"
+                msg += "🎯 گردونه رو بچرخون و برنده شو!"
+            
+            msg += "\n💫 تو هم می‌تونی یکی از برترین‌ها باشی!"
             await update.message.reply_text(msg, reply_markup=chat_menu())
 
         elif text == "👤 پروفایل":
@@ -1632,10 +1770,14 @@ async def handle_messages(update: Update, context: ContextTypes):
                     reply_markup=chat_menu()
                 )
                 return
+            
+            # کسر مبلغ از موجودی کاربر بلافاصله
+            update_balance(user_id, -amount)
+            
             user_data = get_user_data(user_id)
             invites = user_data[1]
             card_number = context.user_data.get("card_number")
-            update_balance(user_id, -amount)
+            
             await context.bot.send_message(
                 ADMIN_ID,
                 f"💸 درخواست برداشت جدید:\n"
@@ -1646,7 +1788,7 @@ async def handle_messages(update: Update, context: ContextTypes):
                 reply_markup=payment_confirmation_button(user_id, amount)
             )
             await update.message.reply_text(
-                f"✅ درخواست برداشت {amount:,} تومان ثبت شد. ادمین جایزه شما رو پرداخت می‌کنه! لطفاً منتظر تأیید باشید.",
+                f"✅ درخواست برداشت {amount:,} تومان ثبت شد و از موجودی شما کسر شد. ادمین جایزه شما رو پرداخت می‌کنه! لطفاً منتظر تأیید باشید.",
                 reply_markup=chat_menu()
             )
             context.user_data.clear()
@@ -1706,6 +1848,16 @@ async def handle_messages(update: Update, context: ContextTypes):
                 )
                 context.user_data["waiting_for_channel_id"] = True
 
+        elif context.user_data.get("waiting_for_notification"):
+            context.user_data["waiting_for_notification"] = False
+            context.user_data["notification_text"] = text
+            
+            await update.message.reply_text(
+                f"📢 متن اطلاع‌رسانی:\n\n{text}\n\n"
+                f"آیا می‌خواهید این پیام به همه کاربران ارسال شود؟",
+                reply_markup=notification_confirmation_keyboard()
+            )
+
     except Exception as e:
         logger.error(f"خطای هندلر پیام برای کاربر {user_id}: {str(e)}")
         await update.message.reply_text(
@@ -1739,7 +1891,8 @@ async def set_menu_commands(application):
         BotCommand(command="/user_info", description="اطلاعات کاربران (ادمین)"),
         BotCommand(command="/list_channels", description="مدیریت کانال‌های اجباری (ادمین)"),
         BotCommand(command="/debug", description="دیباگ وضعیت ربات (ادمین)"),
-        BotCommand(command="/gift_users", description="هدیه به کاربران (ادمین)")
+        BotCommand(command="/gift_users", description="هدیه به کاربران (ادمین)"),
+        BotCommand(command="/notification", description="ارسال اطلاع‌رسانی (ادمین)")
     ]
     await application.bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
     await application.bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
@@ -1754,6 +1907,7 @@ application.add_handler(CommandHandler("user_info", user_info))
 application.add_handler(CommandHandler("list_channels", list_channels))
 application.add_handler(CommandHandler("debug", debug))
 application.add_handler(CommandHandler("gift_users", gift_users))
+application.add_handler(CommandHandler("notification", notification))
 application.add_handler(CallbackQueryHandler(callback_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
